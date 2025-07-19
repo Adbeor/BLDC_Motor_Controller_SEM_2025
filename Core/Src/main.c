@@ -2,86 +2,43 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * <h2><center>&copy; Copyright (c) 2021 STMicroelectronics.
-  * All rights reserved.</center></h2>
-  *
-  * This software component is licensed by ST under BSD 3-Clause license,
-  * the "License"; You may not use this file except in compliance with the
-  * License. You may obtain a copy of the License at:
-  *                        opensource.org/licenses/BSD-3-Clause
-  *
+  * @brief          : Main program body - Refactored with modular architecture
   ******************************************************************************
   */
 /* USER CODE END Header */
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
-
 #include "PID.h"
-
+#include "adc_manager.h"
+#include "bldc_control.h"
+#include "can_interface.h"
+#include "speed_control.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-
-/* Controller parameters */
-#define PID_KP  0.04f
-#define PID_KI  0.1f
-#define PID_KD  0.0f
-
-#define PID_TAU 0.02f
-
-#define PID_LIM_MIN  0.0f
-#define PID_LIM_MAX  255.0f
-
-#define SAMPLE_TIME_S 0.01f
-
-
-/* CAN data */
-
-//Position of the respective data flags
-
-#define GF 0u  	// General flag
-#define PW 1u	// Power flag
-#define EM 2u	// Emergency flag
-#define SU 3u	// Speed unit
-#define CS0 4u	// Cruice Speed 0
-#define CS1 5u	// Cruice Speed 1
-
-
-
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
-
 CAN_HandleTypeDef hcan;
-
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 /* USER CODE BEGIN PV */
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -92,136 +49,14 @@ static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_CAN_Init(void);
 static void MX_TIM3_Init(void);
-/* USER CODE BEGIN PFP */
 
+/* USER CODE BEGIN PFP */
+void MotorController_Init(void);
+void MotorController_Update(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-//FUNCTIONS
-void show_velocity(uint16_t vel); //Shows integer Velocity using three digits
-
-void Hall_Decoder(void); // Makes the hall encoding for commutation
-
-
-
-//VARIABLES
-
-uint8_t power = 0; // Power state
-
-int Sensors[3] = {0,0,0}; //Hall sensors (A, B, C)
-
-float duty_cycle = 0; //Duty cycle para el PWM
-
-uint16_t adc_sample = 0;
-
-uint8_t counts = 0;
-
-float adc_sum = 0;
-
-uint16_t adc_av = 0; // adc_average
-
-float vel_d = 0; //desired velocity
-
-
-float cruise_factor1 = 7.29; // factor to obtain the first cruise speed (35 km/h)
-
-float cruise_factor2 = 8.5; // factor to obtain the second cruise speed (30 km/h)
-
-float cruise_factor3 = 10.2; // factor to obtain the second cruise speed (25 km/h)
-
-float cruise_factor = 7.29; // General cruise factor, initial value with 1
-
-uint16_t steps = 0; // Number of steps by the motor
-
-float vel_rpm = 0; // Number of steps by the motor
-
-float velocity = 0; // Any of the other velocities
-
-float rpm2kmh = 10.44; // rpm speed to km/h factor (se divide los rpm por esto para obtener en km/h)
-
-//CONTROL VALUES
-
-
-float error = 0; //difference between desired and measured speed
-
-float cumError = 0; //error*elapsedTime
-
-
-float proportional = 0; // Proportional part
-
-float integral = 0; //Integral part
-
-float u = 0; //control law
-
-//CAN VARIABLES
-
-uint8_t CAN_FLAG_REG;	// Register of flags for can
-
-
-CAN_TxHeaderTypeDef TxHeader;
-CAN_RxHeaderTypeDef RxHeader;
-
-uint32_t TxMailbox;
-uint32_t FreeMailbox; // Check the amount of mailboxes free
-
-
-uint8_t TxData[8];
-uint8_t RxData[8];
-
-
-//PID
-PIDController pid = { PID_KP, PID_KI, PID_KD, PID_TAU,
-						PID_LIM_MIN, PID_LIM_MAX, SAMPLE_TIME_S };
-
-// Motor variables
-
-uint8_t motor_off = 0;
-
-void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
-{
-	HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData);
-
-	if (RxData[0] == 96 && RxData[1] == 234){ // HMI Page 60000
-
-		if (RxData[4] == 1){ //HMI button 1
-			power = 1;
-		}
-		if (RxData[4] == 2){ //HMI button 2
-			power = 0;
-		}
-
-
-		if (RxData[5] == 16){ //HMI down button
-			//TxData[4] = 0;		//Change button color
-			CAN_FLAG_REG &= ~(1 << CS1);
-			CAN_FLAG_REG &= ~(1 << CS0); //Cruise speed 0
-
-		}
-		if (RxData[5] == 8){ //HMI left button
-			//TxData[4] = 1; 		//Change button color
-			CAN_FLAG_REG &= ~(1 << CS1);
-			CAN_FLAG_REG |=  (1 << CS0); //Cruise speed 1
-
-		}
-		if (RxData[5] == 32){ //HMI right button
-			//TxData[4] = 2;		//Change button color
-			CAN_FLAG_REG |=  (1 << CS1);
-			CAN_FLAG_REG &= ~(1 << CS0); //Cruise speed 2
-
-		}
-		if (RxData[5] == 2){ //HMI up button
-			//TxData[4] = 3;		//Change button color
-			CAN_FLAG_REG |=  (1 << CS1);
-			CAN_FLAG_REG |=  (1 << CS0); //Cruise speed 3
-
-		}
-
-	}
-}
-
-
 /* USER CODE END 0 */
 
 /**
@@ -231,24 +66,19 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
-
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
-
   /* USER CODE END Init */
 
   /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -258,133 +88,24 @@ int main(void)
   MX_TIM2_Init();
   MX_CAN_Init();
   MX_TIM3_Init();
+
   /* USER CODE BEGIN 2 */
-
-  //Starting timer2 (0.5 seconds) to show speed
-  HAL_TIM_Base_Start_IT(&htim2);
-
-  //Starting timer3 (0.01 seconds) for speed control
-  HAL_TIM_Base_Start_IT(&htim3);
-
-  //CAN
-  HAL_CAN_Start(&hcan);
-
-  //CAN FIFO activation
-  HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
-
-  //Configurando la transmision
-
-  TxHeader.DLC = 8;  // Son 8 bytes de data
-  TxHeader.ExtId = 0;
-  TxHeader.IDE = CAN_ID_STD; //Identificador del mensaje
-  TxHeader.RTR = CAN_RTR_DATA;
-  TxHeader.StdId = 0x103;  // Este es el ID que mandaremos al periferico
-  TxHeader.TransmitGlobalTime = DISABLE;
-
-  // CAN_FLAG_REG Initialization
-  CAN_FLAG_REG |=  (1<<GF);	// General Flag 1 (necessary)
-  //CAN_FLAG_REG &= ~(1<<SU); // Speed RPM
-  CAN_FLAG_REG |=  (1<<SU); // Speed km/h
-  CAN_FLAG_REG &= ~(1<<EM); // No Emergency
-  CAN_FLAG_REG &= ~(1<<PW); // Initial OFF
-  CAN_FLAG_REG &= ~(1<<CS0); //
-  CAN_FLAG_REG &= ~(1<<CS1); // Cruise speed0
-
-
-  TxData[0] = 0; 	//Speed component
-  TxData[1] = 0;	//Speed component
-  TxData[2] = 0;
-  TxData[3] = 0;
-  TxData[4] = 0;
-  TxData[5] = 0;
-  TxData[6] = 0;
-  TxData[7] = CAN_FLAG_REG;	//Flags byte  [0 0 0 0 0 0 0 1] [x x cs cs su em pw gf]
-
-
-  // x: not defined
-  // cs: cruice speed (0 to 3)
-  // su: speed units (0 for RPM, 1 for km/h)
-  // em: emergency ( 1 for alert)
-  // pw: Power flag (0 off, 1 on)
-  // gf: general flag (1 always)
-
-
+  // Initialize motor controller subsystems
+  MotorController_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
-
-  /* Initialize PID controller */
-
-
-  PIDController_Init(&pid);
-
-  HAL_ADC_Start_IT(&hadc1);
-
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, duty_cycle);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, duty_cycle);
-
-  //INITIAL POSITION
-
-	//HALL A
-	if (HAL_GPIO_ReadPin(HALL_A_GPIO_Port,HALL_A_Pin)) Sensors[0] = 1;
-	else Sensors[0] = 0;
-	//HALL B
-	if (HAL_GPIO_ReadPin(HALL_B_GPIO_Port,HALL_B_Pin)) Sensors[1] = 1;
-	else Sensors[1] = 0;
-	//HALL C
-	if (HAL_GPIO_ReadPin(HALL_C_GPIO_Port,HALL_C_Pin)) Sensors[2] = 1;
-	else Sensors[2] = 0;
-
-
-
   while (1)
   {
-
-
-	  if (power == 1){
-
-		  HAL_ADC_Start_IT(&hadc1);
-
-		  //HALL DECODER
-
-		  Hall_Decoder(); //Makes the hall encoding
-
-
-	  }
-
-	  //Poner modo sleep
-
-	  else{
-
-		  //TURN OFF PID
-
-		  PIDController_Reset(&pid);
-
-		  integral = pid.integrator;
-
-		  u = pid.out;
-
-		  duty_cycle = u;
-
-
-		  //Turn off the high gates
-		  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, u);
-		  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, u);
-		  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, u);
-
-		  //Turn off the low gates
-		  HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
-		  HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
-		  HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
-
-	  }
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    // Main control loop - handles system state and motor control
+    MotorController_Update();
+
+    // Small delay to prevent excessive CPU usage
+    HAL_Delay(1);
   }
   /* USER CODE END 3 */
 }
@@ -438,15 +159,12 @@ void SystemClock_Config(void)
   */
 static void MX_ADC1_Init(void)
 {
-
   /* USER CODE BEGIN ADC1_Init 0 */
-
   /* USER CODE END ADC1_Init 0 */
 
   ADC_ChannelConfTypeDef sConfig = {0};
 
   /* USER CODE BEGIN ADC1_Init 1 */
-
   /* USER CODE END ADC1_Init 1 */
   /** Common config
   */
@@ -471,9 +189,7 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
-
   /* USER CODE END ADC1_Init 2 */
-
 }
 
 /**
@@ -483,13 +199,10 @@ static void MX_ADC1_Init(void)
   */
 static void MX_CAN_Init(void)
 {
-
   /* USER CODE BEGIN CAN_Init 0 */
-
   /* USER CODE END CAN_Init 0 */
 
   /* USER CODE BEGIN CAN_Init 1 */
-
   /* USER CODE END CAN_Init 1 */
   hcan.Instance = CAN1;
   hcan.Init.Prescaler = 8;
@@ -508,11 +221,10 @@ static void MX_CAN_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN CAN_Init 2 */
-
   CAN_FilterTypeDef canfilterconfig;
 
   canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
-  canfilterconfig.FilterBank = 10;  // anything between 0 to SlaveStartFilterBank
+  canfilterconfig.FilterBank = 10;
   canfilterconfig.FilterFIFOAssignment = CAN_RX_FIFO0;
   canfilterconfig.FilterIdHigh = 0x01<<5;
   canfilterconfig.FilterIdLow = 0;
@@ -520,12 +232,10 @@ static void MX_CAN_Init(void)
   canfilterconfig.FilterMaskIdLow = 0x0000;
   canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
   canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
-  canfilterconfig.SlaveStartFilterBank = 0;  // 13 to 27 are assigned to slave CAN (CAN 2) OR 0 to 12 are assgned to CAN1
+  canfilterconfig.SlaveStartFilterBank = 0;
 
   HAL_CAN_ConfigFilter(&hcan, &canfilterconfig);
-
   /* USER CODE END CAN_Init 2 */
-
 }
 
 /**
@@ -535,9 +245,7 @@ static void MX_CAN_Init(void)
   */
 static void MX_TIM1_Init(void)
 {
-
   /* USER CODE BEGIN TIM1_Init 0 */
-
   /* USER CODE END TIM1_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
@@ -546,7 +254,6 @@ static void MX_TIM1_Init(void)
   TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
   /* USER CODE BEGIN TIM1_Init 1 */
-
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 2-1;
@@ -605,10 +312,8 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM1_Init 2 */
-
   /* USER CODE END TIM1_Init 2 */
   HAL_TIM_MspPostInit(&htim1);
-
 }
 
 /**
@@ -618,9 +323,7 @@ static void MX_TIM1_Init(void)
   */
 static void MX_TIM2_Init(void)
 {
-
   /* USER CODE BEGIN TIM2_Init 0 */
-
   /* USER CODE END TIM2_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
@@ -628,7 +331,6 @@ static void MX_TIM2_Init(void)
   TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM2_Init 1 */
-
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 800 - 1;
@@ -664,10 +366,8 @@ static void MX_TIM2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM2_Init 2 */
-
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
-
 }
 
 /**
@@ -677,9 +377,7 @@ static void MX_TIM2_Init(void)
   */
 static void MX_TIM3_Init(void)
 {
-
   /* USER CODE BEGIN TIM3_Init 0 */
-
   /* USER CODE END TIM3_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
@@ -687,7 +385,6 @@ static void MX_TIM3_Init(void)
   TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM3_Init 1 */
-
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 800 - 1;
@@ -723,10 +420,8 @@ static void MX_TIM3_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM3_Init 2 */
-
   /* USER CODE END TIM3_Init 2 */
   HAL_TIM_MspPostInit(&htim3);
-
 }
 
 /**
@@ -778,289 +473,9 @@ static void MX_GPIO_Init(void)
 
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
-
 }
 
 /* USER CODE BEGIN 4 */
-
-//FUNCIONES
-
-
-
-void Hall_Decoder(void){
-	if (motor_off == 1){
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-
-		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
-
-	}
-	else{
-	if (Sensors[2] == 1 && Sensors[1] == 0 && Sensors[0] == 1) {
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-
-
-		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
-
-
-		//delay
-		HAL_Delay(0.001);
-
-		HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_SET);
-
-
-
-	}
-	else if(Sensors[2] == 1 && Sensors[1] == 0 && Sensors[0] == 0) {
-
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
-
-		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
-
-
-		//delay
-		HAL_Delay(0.001);
-
-		HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_SET);
-
-	}
-
-	else if(Sensors[2] == 1 && Sensors[1] == 1 && Sensors[0] == 0) {
-
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
-
-		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,   GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
-
-
-		//delay
-		HAL_Delay(0.001);
-
-		HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_SET);
-
-	}
-
-	else if(Sensors[2] == 0 && Sensors[1] == 1 && Sensors[0] == 0) {
-
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-
-		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
-
-
-		//delay
-		HAL_Delay(0.001);
-
-		HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_SET);
-
-	}
-
-	else if(Sensors[2] == 0 && Sensors[1] == 1 && Sensors[0] == 1) {
-
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-
-		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
-
-
-		//delay
-		HAL_Delay(0.001);
-
-		HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_SET);
-
-	}
-
-	else if(Sensors[2] == 0 && Sensors[1] == 0 && Sensors[0] == 1) {
-
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
-		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-
-		HAL_GPIO_WritePin(B_LOW_GPIO_Port , B_LOW_Pin,  GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(A_LOW_GPIO_Port , A_LOW_Pin,  GPIO_PIN_RESET);
-
-
-		//delay
-		HAL_Delay(0.001);
-
-		HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-		HAL_GPIO_WritePin(C_LOW_GPIO_Port , C_LOW_Pin,  GPIO_PIN_SET);
-
-	}
-	}
-}
-
-//INTERRUPCIONES
-
-//ADC INTERRUPT
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
-
-	adc_sample = HAL_ADC_GetValue(&hadc1);
-
-	/*
-	adc_sum+= adc_sample/16.06;  // 16.06 para convertir de 12 bits a 8 bits
-	counts += 1;
-
-	if (counts == 150){
-	  adc_av = adc_sum/counts;
-	  adc_sum = 0;
-	  counts = 0;
-
-	}
-
-	vel_d = adc_av/cruise_factor;
-	duty_cycle = adc_av;
-	*/
-
-	//PI control (reference)
-	adc_sum+= adc_sample/8.192;  // 13.65 para convertir de 12 bits a un intervalo de (0-500 rpm)
-	counts += 1;
-
-	if (counts == 1){
-	  adc_av = adc_sum/counts;
-	  adc_sum = 0;
-	  counts = 0;
-
-	}
-
-	vel_d = adc_av;
-
-}
-
-//HALL INTERRUPTIONS
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-
-
-	//HALL A
-	if (GPIO_Pin == GPIO_PIN_0) {
-
-	if (HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_0)) Sensors[0] = 1;
-	else Sensors[0] = 0;
-
-	steps+=1;
-	}
-
-	//HALL B
-	else if (GPIO_Pin == GPIO_PIN_1) {
-
-	if (HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_1)) Sensors[1] = 1;
-	else Sensors[1] = 0;
-
-	steps+=1;
-	}
-
-	//HALL C
-	else if (GPIO_Pin == GPIO_PIN_10) {
-
-	if (HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_10)) Sensors[2] = 1;
-	else Sensors[2] = 0;
-
-	steps+=1;
-	}
-}
-
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
-
-	//INTERRUPTION TIMER 2 (0.5 s)
-	if (htim->Instance == TIM2){
-
-		//SPEED MEASUREMENT
-		//Formula para el motor de prueba
-//		vel_rpm = 2*60*steps/90;  //cada 0.5 SEGUNDOS se mide la cantidad de revoluciones por minuto
-//		steps = 0;
-
-		//Formula para el motor de MK III
-		vel_rpm = 2*60*steps/138;
-		steps = 0;
-
-		//Enviamos el valor de la velocidad en RPM
-
-		if (vel_rpm > 255){
-			TxData[0] = 255;
-			TxData[1] = vel_rpm - 255;
-		}
-		else{
-			TxData[0] = vel_rpm;
-			TxData[1] = 0;
-		}
-
-		// SI PUSIMOS A KM POR HORA (Quitar si se pone RPM)
-		TxData[0] = vel_rpm/rpm2kmh;
-		TxData[1] = 0;
-
-
-		//Enviamos el estado ON OFF del sistema
-
-		//CAN_FLAG_REG ^= (power ^ CAN_FLAG_REG) & (1 << PW);
-		CAN_FLAG_REG = (CAN_FLAG_REG & (~(1 << PW))) | (power << PW); // Sending the ON (1) or OFF (0)
-		//FreeMailbox = HAL_CAN_GetTxMailboxesFreeLevel(&hcan);
-		//Send by CAN
-
-		TxData[7] = CAN_FLAG_REG;
-		HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-
-
-	}
-
-	//INTERRUPTION TIMER 3 (0.01 s)
-	if (htim->Instance == TIM3){
-
-
-
-		//CONTROL
-
-		PIDController_Update(&pid, vel_d, vel_rpm);
-
-		// Protection
-		if (vel_d<=10){
-			PIDController_Reset(&pid);
-			motor_off = 1;
-		}
-		else{
-			motor_off = 0;
-		}
-
-
-
-		integral = pid.integrator;
-
-		u = pid.out;
-
-		duty_cycle = u;
-
-		// Lazo abierto  (borrar despues para probar el lazo cerrado)
-
-		duty_cycle = vel_d/2;
-
-		if (duty_cycle<=15){
-			duty_cycle = 0;
-		}
-
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, duty_cycle);
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, duty_cycle);
-
-	}
-
-}
-
-
-
 /* USER CODE END 4 */
 
 /**
@@ -1094,4 +509,3 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-
